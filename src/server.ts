@@ -8,22 +8,33 @@ import { ensureAuthSchema } from './utils/authSchemaBootstrap.js';
 const PORT = parseInt(process.env.PORT || '5000', 10);
 
 async function startServer(): Promise<void> {
+  const startedAt = Date.now();
+
   try {
+    console.log('🚀 Startup begin: checking DB and schema...');
+
     // Verify database connection before binding port
     try {
+      console.log('⏱️ Step 1/2: testConnection() started');
       await testConnection();
+      console.log(`⏱️ Step 1/2 complete: testConnection() finished in ${Date.now() - startedAt}ms`);
+
+      console.log('⏱️ Step 2/2: ensureAuthSchema() started');
       await ensureAuthSchema();
+      console.log(`⏱️ Step 2/2 complete: ensureAuthSchema() finished in ${Date.now() - startedAt}ms`);
     } catch (dbError) {
       console.warn('⚠️ MySQL connection warning: Unable to connect to MySQL database at startup.');
       console.warn('   Ensure MySQL is running and your .env credentials are correct.');
       console.warn('   Error details:', (dbError as Error).message);
+      console.warn(`⏱️ Startup DB step failed after ${Date.now() - startedAt}ms`);
     }
 
-    const server = app.listen(PORT, () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`🚀 Finance Tracker Backend API is running on http://localhost:${PORT}`);
       console.log(`   Healthcheck: http://localhost:${PORT}/api/health`);
       console.log(`   Transactions: http://localhost:${PORT}/api/transactions`);
       console.log(`   Summary: http://localhost:${PORT}/api/summary`);
+      console.log(`⏱️ Server listening after ${Date.now() - startedAt}ms total`);
     });
 
     // Graceful shutdown handling
