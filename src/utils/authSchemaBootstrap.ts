@@ -3,9 +3,33 @@ import { pool } from '../config/db.js';
 
 export function buildAuthMigrationStatements(): string[] {
   return [
+    `CREATE TABLE IF NOT EXISTS users (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(100) NOT NULL,
+      email VARCHAR(191) NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY ux_users_email (email)
+    ) ENGINE=InnoDB`,
     'ALTER TABLE users ADD COLUMN username VARCHAR(50) NULL',
     'ALTER TABLE users ADD COLUMN is_verified TINYINT(1) NOT NULL DEFAULT 0',
     'CREATE UNIQUE INDEX ux_users_username ON users (username)',
+    `CREATE TABLE IF NOT EXISTS transactions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      type ENUM('income', 'expense') NOT NULL,
+      amount DECIMAL(10, 2) NOT NULL,
+      category VARCHAR(50) NOT NULL,
+      description VARCHAR(255) NOT NULL,
+      date DATE NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_user_date (user_id, date),
+      INDEX idx_user_type_date (user_id, type, date),
+      INDEX idx_user_category (user_id, category)
+    ) ENGINE=InnoDB`,
     `CREATE TABLE IF NOT EXISTS pending_users (
       id INT AUTO_INCREMENT PRIMARY KEY,
       email VARCHAR(191) NOT NULL,
@@ -29,6 +53,15 @@ export function buildAuthMigrationStatements(): string[] {
   ];
 }
 
+async function tableExists(tableName: string): Promise<boolean> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    'SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1',
+    [tableName],
+  );
+
+  return rows.length > 0;
+}
+
 async function columnExists(tableName: string, columnName: string): Promise<boolean> {
   const [rows] = await pool.query<RowDataPacket[]>(
     'SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1',
@@ -48,6 +81,40 @@ async function indexExists(tableName: string, indexName: string): Promise<boolea
 }
 
 export async function ensureAuthSchema(): Promise<void> {
+  if (!(await tableExists('users'))) {
+    await pool.query(`
+      CREATE TABLE users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(191) NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        currency VARCHAR(10) NOT NULL DEFAULT 'USD',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY ux_users_email (email)
+      ) ENGINE=InnoDB
+    `);
+  }
+
+  if (!(await tableExists('transactions'))) {
+    await pool.query(`
+      CREATE TABLE transactions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        type ENUM('income', 'expense') NOT NULL,
+        amount DECIMAL(10, 2) NOT NULL,
+        category VARCHAR(50) NOT NULL,
+        description VARCHAR(255) NOT NULL,
+        date DATE NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_user_date (user_id, date),
+        INDEX idx_user_type_date (user_id, type, date),
+        INDEX idx_user_category (user_id, category)
+      ) ENGINE=InnoDB
+    `);
+  }
+
   if (!(await columnExists('users', 'username'))) {
     await pool.query('ALTER TABLE users ADD COLUMN username VARCHAR(50) NULL');
   }
