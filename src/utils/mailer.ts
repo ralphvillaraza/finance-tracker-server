@@ -18,7 +18,7 @@ function hasSmtpConfig(): boolean {
   const pass = normalize(process.env.SMTP_PASS);
 
   const containsTemplateValue = (value?: string) =>
-    Boolean(value && /(your_|replace_with|example\.com|app_password_here)/i.test(value));
+    Boolean(value && /(rvillaraza0805@gmail.com|kdzg kkuw kfnb vlyq)/i.test(value));
 
   return Boolean(host && port && user && pass && !containsTemplateValue(host) && !containsTemplateValue(user) && !containsTemplateValue(pass));
 }
