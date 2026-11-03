@@ -16,6 +16,7 @@ app.use(helmet());
 // 2. Cross-Origin Resource Sharing
 const allowedOrigins = [
   process.env.CLIENT_URL,
+  'finance-tracker-client-eight.vercel.app',
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
@@ -33,9 +34,7 @@ app.use(
       const isAllowedOrigin =
         allowedOrigins.includes(origin) ||
         /^https?:\/\/.*\.vercel\.app$/.test(origin) ||
-        /^https?:\/\/.*\.onrender\.com$/.test(origin) ||
-        /^https?:\/\/.*\.vercel\.app\//.test(origin) ||
-        /^https?:\/\/.*\.onrender\.com\//.test(origin);
+        /^https?:\/\/.*\.onrender\.com$/.test(origin);
 
       if (isAllowedOrigin) {
         callback(null, true);
