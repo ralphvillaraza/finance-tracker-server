@@ -10,6 +10,9 @@ import { errorHandler } from './middleware/errorHandler.js';
 
 const app: Application = express();
 
+// Trust Render/Vercel proxy headers so rate limiting sees the real client IP.
+app.set('trust proxy', 1);
+
 // 1. HTTP Security Headers
 app.use(helmet());
 
