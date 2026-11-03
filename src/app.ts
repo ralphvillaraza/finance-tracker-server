@@ -82,12 +82,8 @@ app.get('/', (req: Request, res: Response) => {
   });
 });
 
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    service: 'Finance Tracker API',
-    timestamp: new Date().toISOString(),
-  });
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.type('text/plain').send('OK');
 });
 
 // 6. Application Routes
