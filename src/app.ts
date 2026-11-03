@@ -65,6 +65,21 @@ app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 
 // 5. Health Check
+app.get('/', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    service: 'Finance Tracker API',
+    status: 'ok',
+    endpoints: {
+      health: '/api/health',
+      auth: '/api/auth',
+      transactions: '/api/transactions',
+      summary: '/api/summary',
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
+
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({
     status: 'ok',
