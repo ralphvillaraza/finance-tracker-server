@@ -14,12 +14,39 @@ const app: Application = express();
 app.use(helmet());
 
 // 2. Cross-Origin Resource Sharing
-const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+].filter(Boolean) as string[];
+
 app.use(
   cors({
-    origin: [clientUrl, 'http://localhost:3000', 'http://127.0.0.1:5173'],
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      const isAllowedOrigin =
+        allowedOrigins.includes(origin) ||
+        /^https?:\/\/.*\.vercel\.app$/.test(origin) ||
+        /^https?:\/\/.*\.onrender\.com$/.test(origin) ||
+        /^https?:\/\/.*\.vercel\.app\//.test(origin) ||
+        /^https?:\/\/.*\.onrender\.com\//.test(origin);
+
+      if (isAllowedOrigin) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
   })
 );
 
