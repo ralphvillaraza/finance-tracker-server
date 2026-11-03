@@ -6,10 +6,14 @@ export interface AuthTokenPayload {
   email: string;
 }
 
-const DEFAULT_JWT_SECRET = 'finance-tracker-dev-secret-change-me';
-
 function getJwtSecret(): string {
-  return process.env.JWT_SECRET || DEFAULT_JWT_SECRET;
+  const secret = process.env.JWT_SECRET?.trim();
+
+  if (!secret) {
+    throw new Error('JWT_SECRET is not configured. Set it in server/.env before starting the app.');
+  }
+
+  return secret;
 }
 
 export function signAuthToken(payload: AuthTokenPayload): string {

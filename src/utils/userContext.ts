@@ -5,11 +5,9 @@ interface UserIdRow extends RowDataPacket {
   id: number;
 }
 
-const DEFAULT_USER_ID = 1;
-
 /**
  * Returns the authenticated user ID when a valid session is present.
- * Falls back to the legacy single-user default only when no authenticated user exists.
+ * Never falls back to a legacy single-user account when auth is missing.
  */
 export async function resolveAuthenticatedUserId(options?: {
   reqUserId?: number;
@@ -21,42 +19,39 @@ export async function resolveAuthenticatedUserId(options?: {
     return reqUserId;
   }
 
-  const preferredUserId = options?.preferredUserId ?? DEFAULT_USER_ID;
+  const preferredUserId = options?.preferredUserId;
   const ensureExists = options?.ensureExists ?? false;
 
-  const [preferredRows] = await pool.query<UserIdRow[]>(
-    'SELECT id FROM users WHERE id = ? LIMIT 1',
-    [preferredUserId]
-  );
+  if (typeof preferredUserId === 'number' && Number.isFinite(preferredUserId) && preferredUserId > 0) {
+    const [preferredRows] = await pool.query<UserIdRow[]>(
+      'SELECT id FROM users WHERE id = ? LIMIT 1',
+      [preferredUserId]
+    );
 
-  if (preferredRows.length > 0) {
-    return preferredRows[0].id;
+    if (preferredRows.length > 0) {
+      return preferredRows[0].id;
+    }
   }
 
-  const [anyRows] = await pool.query<UserIdRow[]>('SELECT id FROM users ORDER BY id ASC LIMIT 1');
-  if (anyRows.length > 0) {
-    return anyRows[0].id;
+  if (ensureExists) {
+    const uniqueSuffix = Date.now();
+    const [insertResult] = await pool.query<ResultSetHeader>(
+      `
+        INSERT INTO users (name, email, password_hash, currency)
+        VALUES (?, ?, ?, ?)
+      `,
+      [
+        'Local User',
+        `local-user-${uniqueSuffix}@finance-tracker.local`,
+        'local-dev-password-hash-placeholder',
+        'USD',
+      ]
+    );
+
+    return insertResult.insertId;
   }
 
-  if (!ensureExists) {
-    return preferredUserId;
-  }
-
-  const uniqueSuffix = Date.now();
-  const [insertResult] = await pool.query<ResultSetHeader>(
-    `
-      INSERT INTO users (name, email, password_hash, currency)
-      VALUES (?, ?, ?, ?)
-    `,
-    [
-      'Local User',
-      `local-user-${uniqueSuffix}@finance-tracker.local`,
-      'local-dev-password-hash-placeholder',
-      'USD',
-    ]
-  );
-
-  return insertResult.insertId;
+  throw new Error('No authenticated user context found for this request.');
 }
 
 export async function resolveActiveUserId(options?: {

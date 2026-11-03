@@ -170,7 +170,6 @@ export async function signup(req: Request, res: Response, next: NextFunction): P
     res.status(201).json({
       success: true,
       message: 'Your account is pending verification. Please check your email and enter the 6-digit code.',
-      ...(process.env.NODE_ENV !== 'production' ? { devVerificationCode: verificationCode } : {}),
     });
   } catch (error) {
     next(error);
@@ -314,7 +313,6 @@ export async function forgotPassword(req: Request, res: Response, next: NextFunc
       res.json({
         success: true,
         message: 'If the email exists, a reset code has been sent.',
-        ...(process.env.NODE_ENV !== 'production' ? { devResetCode: code } : {}),
       });
       return;
     }
