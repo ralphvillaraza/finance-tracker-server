@@ -146,26 +146,15 @@ export async function signup(req: Request, res: Response, next: NextFunction): P
 
     const verificationCode = await createVerificationCode(pendingInsert.insertId, email, 'signup_verification');
 
-    try {
-      await sendEmail({
-        to: email,
-        subject: 'FinanceTracker - Verify your account',
-        text: `Your FinanceTracker verification code is ${verificationCode}. This code expires in 15 minutes.`,
-        html: `<p>Your FinanceTracker verification code is <strong>${verificationCode}</strong>.</p><p>This code expires in 15 minutes.</p>`,
-      });
-    } catch (mailError) {
-      await pool.query('DELETE FROM pending_users WHERE id = ?', [pendingInsert.insertId]);
-      const message =
-        mailError instanceof Error
-          ? mailError.message
-          : 'Unable to send verification email. Please check the SMTP configuration and try again.';
-
-      res.status(500).json({
-        success: false,
-        error: message,
-      });
-      return;
-    }
+    // Send verification email asynchronously without blocking registration response
+    sendEmail({
+      to: email,
+      subject: 'FinanceTracker - Verify your account',
+      text: `Your FinanceTracker verification code is ${verificationCode}. This code expires in 15 minutes.`,
+      html: `<p>Your FinanceTracker verification code is <strong>${verificationCode}</strong>.</p><p>This code expires in 15 minutes.</p>`,
+    }).catch((mailError) => {
+      console.error(`[SIGNUP_EMAIL_ERROR] Failed to send verification email to ${email}:`, mailError);
+    });
 
     res.status(201).json({
       success: true,
@@ -303,11 +292,14 @@ export async function forgotPassword(req: Request, res: Response, next: NextFunc
       const user = users[0];
       const code = await createVerificationCode(user.id, user.email, 'reset_password');
 
-      await sendEmail({
+      // Send reset email asynchronously without blocking response
+      sendEmail({
         to: user.email,
         subject: 'FinanceTracker - Password reset code',
         text: `Your FinanceTracker password reset code is ${code}. This code expires in 15 minutes.`,
         html: `<p>Your FinanceTracker password reset code is <strong>${code}</strong>.</p><p>This code expires in 15 minutes.</p>`,
+      }).catch((mailError) => {
+        console.error(`[FORGOT_PASSWORD_EMAIL_ERROR] Failed to send reset email to ${user.email}:`, mailError);
       });
 
       res.json({

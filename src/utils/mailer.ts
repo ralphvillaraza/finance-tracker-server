@@ -1,62 +1,77 @@
-import nodemailer from 'nodemailer';
-
-interface MailPayload {
+export interface MailPayload {
   to: string;
   subject: string;
-  text: string;
+  text?: string;
   html?: string;
 }
 
-function normalize(value: string | undefined): string | undefined {
-  return value?.trim();
+interface GoogleScriptEmailResponse {
+  success: boolean;
+  error?: string;
 }
 
-function hasSmtpConfig(): boolean {
-  const host = normalize(process.env.SMTP_HOST);
-  const port = normalize(process.env.SMTP_PORT);
-  const user = normalize(process.env.SMTP_USER);
-  const pass = normalize(process.env.SMTP_PASS);
+function getEmailBridgeConfig(): { scriptUrl: string; scriptSecret: string } {
+  const scriptUrl = process.env.GOOGLE_SCRIPT_URL?.trim();
+  const scriptSecret = process.env.GOOGLE_SCRIPT_SECRET?.trim();
 
-  const containsTemplateValue = (value?: string) =>
-    Boolean(value && /(your_|replace_with|example\.com|app_password_here)/i.test(value));
+  if (!scriptUrl || !scriptSecret) {
+    const missing: string[] = [];
+    if (!scriptUrl) missing.push('GOOGLE_SCRIPT_URL');
+    if (!scriptSecret) missing.push('GOOGLE_SCRIPT_SECRET');
 
-  return Boolean(host && port && user && pass && !containsTemplateValue(host) && !containsTemplateValue(user) && !containsTemplateValue(pass));
-}
-
-export async function sendEmail(payload: MailPayload): Promise<void> {
-  if (!hasSmtpConfig()) {
-    const message =
-      'SMTP is not configured correctly. Update the server .env with your real Gmail SMTP credentials and App Password before sending verification emails.';
-
+    const message = `Google Apps Script email service configuration error: missing ${missing.join(', ')}. Set them in the server environment variables.`;
     console.error('[MAILER:CONFIG_ERROR]', message);
     throw new Error(message);
   }
 
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    tls: {
-      rejectUnauthorized: false,
-    },
-  });
+  return { scriptUrl, scriptSecret };
+}
 
+export async function sendEmail(payload: MailPayload): Promise<void> {
+  const { scriptUrl, scriptSecret } = getEmailBridgeConfig();
+
+  const html = payload.html || payload.text || '';
+
+  let response: Response;
   try {
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to: payload.to,
-      subject: payload.subject,
-      text: payload.text,
-      html: payload.html,
+    response = await fetch(scriptUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        secret: scriptSecret,
+        to: payload.to,
+        subject: payload.subject,
+        html,
+      }),
+      redirect: 'follow',
     });
-  } catch (error) {
-    const message =
-      'Gmail rejected the SMTP login. Generate a Gmail App Password and replace SMTP_PASS in the server .env file. Do not use your normal Gmail password.';
-    console.error('[MAILER:SMTP_AUTH_ERROR]', error);
+  } catch (fetchError) {
+    const message = `Failed to connect to Google Apps Script email bridge: ${(fetchError as Error).message}`;
+    console.error('[MAILER:NETWORK_ERROR]', message);
+    throw new Error(message);
+  }
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => '');
+    const message = `Google Apps Script email bridge returned HTTP status ${response.status} (${response.statusText}): ${errorBody}`;
+    console.error('[MAILER:HTTP_ERROR]', message);
+    throw new Error(message);
+  }
+
+  let data: GoogleScriptEmailResponse;
+  try {
+    data = (await response.json()) as GoogleScriptEmailResponse;
+  } catch (parseError) {
+    const message = `Failed to parse JSON response from Google Apps Script email bridge: ${(parseError as Error).message}`;
+    console.error('[MAILER:PARSE_ERROR]', message);
+    throw new Error(message);
+  }
+
+  if (!data || !data.success) {
+    const message = data?.error || 'Failed to send email via Google Apps Script bridge: unknown error.';
+    console.error('[MAILER:SEND_ERROR]', message);
     throw new Error(message);
   }
 }
