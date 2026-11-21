@@ -3,6 +3,7 @@ import { validate } from '../middleware/validate.js';
 import {
   signup,
   verifySignup,
+  resendVerificationCode,
   login,
   forgotPassword,
   resetPassword,
@@ -10,6 +11,7 @@ import {
 import {
   SignupSchema,
   VerifySignupSchema,
+  ResendVerificationSchema,
   LoginSchema,
   ForgotPasswordSchema,
   ResetPasswordSchema,
@@ -19,6 +21,7 @@ const router = Router();
 
 router.post('/signup', validate(SignupSchema, 'body'), signup);
 router.post('/verify-signup', validate(VerifySignupSchema, 'body'), verifySignup);
+router.post('/resend-verification', validate(ResendVerificationSchema, 'body'), resendVerificationCode);
 router.post('/login', validate(LoginSchema, 'body'), login);
 router.post('/forgot-password', validate(ForgotPasswordSchema, 'body'), forgotPassword);
 router.post('/reset-password', validate(ResetPasswordSchema, 'body'), resetPassword);

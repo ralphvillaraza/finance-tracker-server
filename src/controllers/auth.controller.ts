@@ -4,6 +4,7 @@ import { pool } from '../config/db.js';
 import {
   SignupInput,
   VerifySignupInput,
+  ResendVerificationInput,
   LoginInput,
   ForgotPasswordInput,
   ResetPasswordInput,
@@ -36,7 +37,6 @@ interface VerificationCodeRow extends RowDataPacket {
 export type SignupConflictStatus =
   | 'email_in_use'
   | 'username_in_use'
-  | 'email_or_username_already_pending'
   | null;
 
 export function getSignupConflictStatus({
@@ -44,8 +44,6 @@ export function getSignupConflictStatus({
   username,
   verifiedEmails = [],
   verifiedUsernames = [],
-  pendingEmails = [],
-  pendingUsernames = [],
 }: {
   email: string;
   username: string;
@@ -55,20 +53,14 @@ export function getSignupConflictStatus({
   pendingUsernames?: string[];
 }): SignupConflictStatus {
   const normalizedEmail = email.trim().toLowerCase();
-  const normalizedUsername = username.trim();
-
-  const emailMatchesPending = pendingEmails.some((value) => value.trim().toLowerCase() === normalizedEmail);
-  const usernameMatchesPending = pendingUsernames.some((value) => value.trim() === normalizedUsername);
-  if (emailMatchesPending || usernameMatchesPending) {
-    return 'email_or_username_already_pending';
-  }
+  const normalizedUsername = username.trim().toLowerCase();
 
   const emailMatchesVerified = verifiedEmails.some((value) => value.trim().toLowerCase() === normalizedEmail);
   if (emailMatchesVerified) {
     return 'email_in_use';
   }
 
-  const usernameMatchesVerified = verifiedUsernames.some((value) => value.trim() === normalizedUsername);
+  const usernameMatchesVerified = verifiedUsernames.some((value) => value.trim().toLowerCase() === normalizedUsername);
   if (usernameMatchesVerified) {
     return 'username_in_use';
   }
@@ -84,6 +76,16 @@ async function createVerificationCode(userId: number, email: string, purpose: 's
   const code = generateCode();
   const codeHash = await hashPassword(code);
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+  // Invalidate any previously active unused codes for this email and purpose
+  await pool.query(
+    `
+      UPDATE auth_verification_codes
+      SET used_at = NOW()
+      WHERE email = ? AND purpose = ? AND used_at IS NULL
+    `,
+    [email, purpose]
+  );
 
   await pool.query(
     `
@@ -102,49 +104,54 @@ export async function signup(req: Request, res: Response, next: NextFunction): P
     const email = input.email.trim().toLowerCase();
     const username = input.username.trim();
 
+    // 1. Only verified active accounts in 'users' reserve emails and usernames
     const [verifiedUsers] = await pool.query<UserRow[]>(
       'SELECT id, email, username FROM users WHERE LOWER(email) = ? OR LOWER(username) = ? LIMIT 50',
       [email, username]
     );
-    const [pendingUsers] = await pool.query<PendingUserRow[]>(
-      'SELECT email, username FROM pending_users WHERE LOWER(email) = ? OR LOWER(username) = ? LIMIT 50',
-      [email, username]
-    );
 
-    const conflict = getSignupConflictStatus({
-      email,
-      username,
-      verifiedEmails: verifiedUsers.map((user) => user.email),
-      verifiedUsernames: verifiedUsers.map((user) => user.username),
-      pendingEmails: pendingUsers.map((user) => user.email),
-      pendingUsernames: pendingUsers.map((user) => user.username),
-    });
-
-    if (conflict === 'email_or_username_already_pending') {
-      res.status(409).json({ success: false, error: 'This email or username is already pending verification. Please verify it first.' });
-      return;
-    }
-
-    if (conflict === 'email_in_use') {
+    const emailInUse = verifiedUsers.some((u) => u.email.trim().toLowerCase() === email);
+    if (emailInUse) {
       res.status(409).json({ success: false, error: 'Email is already in use' });
       return;
     }
 
-    if (conflict === 'username_in_use') {
+    const usernameInUse = verifiedUsers.some((u) => u.username.trim().toLowerCase() === username.toLowerCase());
+    if (usernameInUse) {
       res.status(409).json({ success: false, error: 'Username is already in use' });
       return;
     }
 
-    const passwordHash = await hashPassword(input.password);
-    const [pendingInsert] = await pool.query<ResultSetHeader>(
-      `
-        INSERT INTO pending_users (email, username, password_hash)
-        VALUES (?, ?, ?)
-      `,
-      [email, username, passwordHash]
+    // 2. Unverified/pending accounts do NOT reserve usernames: others can still choose them.
+    // Check if THIS specific email has an existing pending registration to update.
+    const [pendingUsersWithEmail] = await pool.query<PendingUserRow[]>(
+      'SELECT id, email, username, password_hash FROM pending_users WHERE LOWER(email) = ? LIMIT 1',
+      [email]
     );
 
-    const verificationCode = await createVerificationCode(pendingInsert.insertId, email, 'signup_verification');
+    const passwordHash = await hashPassword(input.password);
+    let pendingUserId: number;
+
+    if (pendingUsersWithEmail.length > 0) {
+      // Reusing unverified email: update pending record with latest username and password
+      pendingUserId = pendingUsersWithEmail[0].id;
+      await pool.query(
+        'UPDATE pending_users SET username = ?, password_hash = ? WHERE id = ?',
+        [username, passwordHash, pendingUserId]
+      );
+    } else {
+      const [pendingInsert] = await pool.query<ResultSetHeader>(
+        `
+          INSERT INTO pending_users (email, username, password_hash)
+          VALUES (?, ?, ?)
+        `,
+        [email, username, passwordHash]
+      );
+      pendingUserId = pendingInsert.insertId;
+    }
+
+    // Generate fresh verification code (invalidates previous codes)
+    const verificationCode = await createVerificationCode(pendingUserId, email, 'signup_verification');
 
     // Send verification email asynchronously without blocking registration response
     sendEmail({
@@ -159,6 +166,84 @@ export async function signup(req: Request, res: Response, next: NextFunction): P
     res.status(201).json({
       success: true,
       message: 'Your account is pending verification. Please check your email and enter the 6-digit code.',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function resendVerificationCode(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const input = req.body as ResendVerificationInput;
+    const email = input.email.trim().toLowerCase();
+
+    // 1. Check if user is already verified and active
+    const [verifiedUsers] = await pool.query<UserRow[]>(
+      'SELECT id, email FROM users WHERE LOWER(email) = ? LIMIT 1',
+      [email]
+    );
+
+    if (verifiedUsers.length > 0) {
+      res.status(400).json({ success: false, error: 'This email is already verified and active. Please log in.' });
+      return;
+    }
+
+    // 2. Check if a pending registration exists
+    const [pendingUsers] = await pool.query<PendingUserRow[]>(
+      'SELECT id, email, username FROM pending_users WHERE LOWER(email) = ? LIMIT 1',
+      [email]
+    );
+
+    if (pendingUsers.length === 0) {
+      res.status(404).json({ success: false, error: 'No pending registration found for this email. Please sign up first.' });
+      return;
+    }
+
+    const pendingUser = pendingUsers[0];
+
+    // 3. Rate limiting / Cooldown: ensure at least 60 seconds between resend requests
+    const [recentCodes] = await pool.query<RowDataPacket[]>(
+      `
+        SELECT id, created_at
+        FROM auth_verification_codes
+        WHERE email = ? AND purpose = 'signup_verification'
+        ORDER BY id DESC
+        LIMIT 1
+      `,
+      [email]
+    );
+
+    if (recentCodes.length > 0) {
+      const lastCreated = new Date(recentCodes[0].created_at).getTime();
+      const elapsedSeconds = Math.floor((Date.now() - lastCreated) / 1000);
+      const COOLDOWN_SECONDS = 60;
+
+      if (elapsedSeconds < COOLDOWN_SECONDS) {
+        const remaining = COOLDOWN_SECONDS - elapsedSeconds;
+        res.status(429).json({
+          success: false,
+          error: `Please wait ${remaining} second${remaining === 1 ? '' : 's'} before requesting another code.`,
+        });
+        return;
+      }
+    }
+
+    // 4. Invalidate older codes and generate a new code
+    const verificationCode = await createVerificationCode(pendingUser.id, email, 'signup_verification');
+
+    // 5. Send email asynchronously without blocking response
+    sendEmail({
+      to: email,
+      subject: 'FinanceTracker - Verification code resend',
+      text: `Your new FinanceTracker verification code is ${verificationCode}. This code expires in 15 minutes.`,
+      html: `<p>Your new FinanceTracker verification code is <strong>${verificationCode}</strong>.</p><p>This code expires in 15 minutes.</p>`,
+    }).catch((mailError) => {
+      console.error(`[RESEND_EMAIL_ERROR] Failed to send verification email to ${email}:`, mailError);
+    });
+
+    res.json({
+      success: true,
+      message: 'A new verification code has been sent to your email.',
     });
   } catch (error) {
     next(error);
@@ -206,13 +291,41 @@ export async function verifySignup(req: Request, res: Response, next: NextFuncti
     const codeRecord = codes[0];
 
     if (new Date(codeRecord.expires_at).getTime() < Date.now()) {
-      res.status(400).json({ success: false, error: 'Verification code has expired' });
+      res.status(400).json({ success: false, error: 'Verification code has expired. Please request a new code.' });
       return;
     }
 
     const isCodeValid = await verifyPassword(input.code, codeRecord.code_hash);
     if (!isCodeValid) {
       res.status(400).json({ success: false, error: 'Invalid verification code' });
+      return;
+    }
+
+    // Verify username was not claimed by another user who verified first
+    const [verifiedWithUsername] = await pool.query<UserRow[]>(
+      'SELECT id FROM users WHERE LOWER(username) = ? LIMIT 1',
+      [pendingUser.username]
+    );
+
+    if (verifiedWithUsername.length > 0) {
+      res.status(409).json({
+        success: false,
+        error: `The username "${pendingUser.username}" was claimed by another user who verified first. Please sign up again with a different username.`,
+      });
+      return;
+    }
+
+    // Verify email is not already active
+    const [verifiedWithEmail] = await pool.query<UserRow[]>(
+      'SELECT id FROM users WHERE LOWER(email) = ? LIMIT 1',
+      [pendingUser.email]
+    );
+
+    if (verifiedWithEmail.length > 0) {
+      res.status(400).json({
+        success: false,
+        error: 'This email is already verified and active. Please log in.',
+      });
       return;
     }
 

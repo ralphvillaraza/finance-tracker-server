@@ -32,6 +32,10 @@ export const VerifySignupSchema = z.object({
   code: z.string({ required_error: 'Verification code is required' }).regex(/^\d{6}$/, 'Code must be 6 digits'),
 });
 
+export const ResendVerificationSchema = z.object({
+  email: z.string({ required_error: 'Email is required' }).email('Email must be valid').max(191),
+});
+
 export const LoginSchema = z.object({
   username: z.string({ required_error: 'Username is required' }).trim().min(1, 'Username is required'),
   password: z.string({ required_error: 'Password is required' }).min(1, 'Password is required'),
@@ -60,6 +64,7 @@ export const ResetPasswordSchema = z
 
 export type SignupInput = z.infer<typeof SignupSchema>;
 export type VerifySignupInput = z.infer<typeof VerifySignupSchema>;
+export type ResendVerificationInput = z.infer<typeof ResendVerificationSchema>;
 export type LoginInput = z.infer<typeof LoginSchema>;
 export type ForgotPasswordInput = z.infer<typeof ForgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof ResetPasswordSchema>;

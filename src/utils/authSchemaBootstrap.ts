@@ -37,7 +37,7 @@ export function buildAuthMigrationStatements(): string[] {
       password_hash VARCHAR(255) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY ux_pending_users_email (email),
-      UNIQUE KEY ux_pending_users_username (username)
+      INDEX idx_pending_users_username (username)
     ) ENGINE=InnoDB`,
     `CREATE TABLE IF NOT EXISTS auth_verification_codes (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -142,9 +142,26 @@ export async function ensureAuthSchema(): Promise<void> {
       password_hash VARCHAR(255) NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY ux_pending_users_email (email),
-      UNIQUE KEY ux_pending_users_username (username)
+      INDEX idx_pending_users_username (username)
     ) ENGINE=InnoDB
   `);
+
+  // Drop unique constraint on username in pending_users if it exists, so pending usernames can be reused
+  if (await indexExists('pending_users', 'ux_pending_users_username')) {
+    try {
+      await pool.query('ALTER TABLE pending_users DROP INDEX ux_pending_users_username');
+    } catch (e) {
+      console.warn('Could not drop ux_pending_users_username on pending_users:', (e as Error).message);
+    }
+  }
+
+  if ((await tableExists('pending_users')) && !(await indexExists('pending_users', 'idx_pending_users_username'))) {
+    try {
+      await pool.query('CREATE INDEX idx_pending_users_username ON pending_users (username)');
+    } catch (e) {
+      console.warn('Could not create idx_pending_users_username on pending_users:', (e as Error).message);
+    }
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS auth_verification_codes (
